@@ -2,8 +2,8 @@ import '@whiskeysockets/baileys';
 import makeWASocket, {
   useMultiFileAuthState,
   DisconnectReason,
-  Browsers,
   WASocket,
+  fetchLatestBaileysVersion,
 } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 import path from 'node:path';
@@ -13,7 +13,7 @@ import { EventEmitter } from 'node:events';
 import { CONFIG } from '../config.js';
 import * as repos from '../db/repos.js';
 
-const baileysLogger = pino({ level: 'silent' });
+const baileysLogger = pino({ level: process.env.BAILEYS_LOG_LEVEL ?? 'silent' });
 
 export type AccountStatus = 'idle' | 'connecting' | 'qr' | 'open' | 'closed' | 'logged_out';
 
@@ -95,11 +95,13 @@ export class Account extends EventEmitter {
   private async connect() {
     this.setStatus('connecting');
     const { state, saveCreds } = await useMultiFileAuthState(this.authDir);
+    const { version } = await fetchLatestBaileysVersion();
+    if (process.env.WA_DEBUG) console.log(`[acct ${this.account.name}] using WA version`, version);
     const sock = makeWASocket({
       auth: state,
+      version,
       logger: baileysLogger,
-      browser: Browsers.macOS('Desktop'),
-      markOnlineOnConnect: false,
+      markOnlineOnConnect: true,
       syncFullHistory: false,
     });
 
@@ -108,6 +110,14 @@ export class Account extends EventEmitter {
 
     sock.ev.on('connection.update', (update) => {
       const { connection, lastDisconnect, qr } = update;
+      if (process.env.WA_DEBUG) {
+        console.log(`[acct ${this.account.name}] update:`, {
+          connection,
+          qr: qr ? '(qr present)' : null,
+          err: lastDisconnect?.error?.message,
+          statusCode: (lastDisconnect?.error as Boom)?.output?.statusCode,
+        });
+      }
       if (qr) {
         this.lastQr = qr;
         this.setStatus('qr');
