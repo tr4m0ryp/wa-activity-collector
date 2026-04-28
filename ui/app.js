@@ -70,8 +70,55 @@ function renderSparkline(targetId) {
   return `<svg class="sparkline" width="${w}" height="${h}"><polyline fill="none" stroke="#1f6feb" stroke-width="1" points="${points}"/></svg>`;
 }
 
+function captureFormState() {
+  const container = $('accounts-container');
+  const saved = {};
+  container.querySelectorAll('form[data-act="add-target"]').forEach((form) => {
+    const id = form.dataset.id;
+    saved[id] = {
+      raw_number: form.querySelector('input[name=raw_number]').value,
+      display_name: form.querySelector('input[name=display_name]').value,
+    };
+  });
+  const active = document.activeElement;
+  let focus = null;
+  if (active && active.tagName === 'INPUT' && container.contains(active)) {
+    const form = active.closest('form[data-act="add-target"]');
+    if (form) {
+      focus = {
+        accountId: form.dataset.id,
+        name: active.name,
+        selectionStart: active.selectionStart,
+        selectionEnd: active.selectionEnd,
+      };
+    }
+  }
+  return { saved, focus };
+}
+
+function restoreFormState(snap) {
+  const container = $('accounts-container');
+  for (const [id, vals] of Object.entries(snap.saved)) {
+    const form = container.querySelector(`form[data-act="add-target"][data-id="${id}"]`);
+    if (!form) continue;
+    const num = form.querySelector('input[name=raw_number]');
+    const name = form.querySelector('input[name=display_name]');
+    if (num && vals.raw_number) num.value = vals.raw_number;
+    if (name && vals.display_name) name.value = vals.display_name;
+  }
+  if (snap.focus) {
+    const form = container.querySelector(`form[data-act="add-target"][data-id="${snap.focus.accountId}"]`);
+    const input = form?.querySelector(`input[name="${snap.focus.name}"]`);
+    if (input) {
+      input.focus();
+      try { input.setSelectionRange(snap.focus.selectionStart, snap.focus.selectionEnd); } catch {}
+    }
+  }
+}
+
 function render() {
   const container = $('accounts-container');
+  const snap = captureFormState();
   $('empty-state').classList.toggle('hidden', state.accounts.length > 0);
   container.innerHTML = state.accounts.map(renderAccount).join('');
 
@@ -93,6 +140,8 @@ function render() {
   document.querySelectorAll('[data-act="del-target"]').forEach((btn) => {
     btn.addEventListener('click', () => deleteTarget(parseInt(btn.dataset.id, 10)));
   });
+
+  restoreFormState(snap);
 }
 
 function renderAccount(acc) {
@@ -258,7 +307,7 @@ function scheduleRender() {
   setTimeout(() => {
     renderPending = false;
     render();
-  }, 500);
+  }, 1500);
 }
 
 setInterval(() => fetchJSON('/api/stats').then(renderStats).catch(() => {}), 5000);
