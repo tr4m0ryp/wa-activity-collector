@@ -1,8 +1,16 @@
 # wa-activity-collector
 
-Minimal multi-account WhatsApp presence/RTT collector. Logs raw probe round-trip times and presence events into SQLite for offline analysis. No labelling, no classification, no inference in the live UI — that's deliberate, the analysis layer comes later.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Node](https://img.shields.io/badge/node-%3E%3D20-green.svg)](https://nodejs.org)
+[![Baileys](https://img.shields.io/badge/baileys-7.x-blue.svg)](https://github.com/WhiskeySockets/Baileys)
+[![Paper](https://img.shields.io/badge/paper-RAID%202025-red.svg)](https://arxiv.org/abs/2411.11194)
+[![Status](https://img.shields.io/badge/status-research%2FPoC-orange.svg)]()
 
-Reimplements the data-collection side of the side-channel described in [Careless Whisper: Exploiting Silent Delivery Receipts to Monitor Users on Mobile Instant Messengers](https://arxiv.org/abs/2411.11194) (Gegenhuber et al., RAID 2025). For each tracked target, the collector sends a "delete" probe for a non-existent message ID at 2Hz; WhatsApp produces a delivery receipt from whichever of the target's linked devices is online; the round-trip time is what gets stored.
+**Multi-account WhatsApp activity tracker via RTT delivery-receipt side-channel.** Sends silent delete-probes at 2Hz per target, records every probe and ack into SQLite, and provides a minimal management UI to add accounts (QR pairing) and target phone numbers. No classification, no inference — only raw timing data, so analysis stays in the analysis layer.
+
+Reimplements the data-collection side of [Careless Whisper: Exploiting Silent Delivery Receipts to Monitor Users on Mobile Instant Messengers](https://arxiv.org/abs/2411.11194) (Gegenhuber et al., RAID 2025 Best Paper). For each tracked target, the collector sends a "delete" probe for a non-existent message ID at 2Hz; WhatsApp produces a delivery receipt from whichever of the target's linked devices is online; the round-trip time is what gets stored.
+
+> **Heads up:** WhatsApp's anti-abuse systems weight datacenter ASNs heavily. Run from a residential connection if you care about your account, and only point this at people who have consented (research subjects, your own devices, etc.).
 
 ## What the data looks like
 
