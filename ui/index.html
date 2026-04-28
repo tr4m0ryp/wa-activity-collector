@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WA Activity Collector</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header>
+    <h1>WA Activity Collector</h1>
+    <div id="stats" class="stats">
+      <span><b id="stat-accounts">0</b> accounts</span>
+      <span><b id="stat-targets">0</b> targets</span>
+      <span><b id="stat-probes">0</b> probes/hr</span>
+      <span>ack rate <b id="stat-ackrate">--</b></span>
+    </div>
+    <button id="btn-add-account">+ account</button>
+  </header>
+
+  <main>
+    <div id="accounts-container"></div>
+    <div id="empty-state" class="empty">No accounts yet. Click "+ account" to pair your first WhatsApp session.</div>
+  </main>
+
+  <div id="modal" class="modal hidden">
+    <div class="modal-card">
+      <button class="modal-close" id="modal-close">x</button>
+      <div id="modal-body"></div>
+    </div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>
