@@ -182,22 +182,21 @@ function renderTargetTable(targets) {
     const ageMs = last ? now - last.ts : null;
     const cls = rttClass(last?.rtt, ageMs ?? Infinity);
     const ws = t.windowStats ?? {};
-    const targetAckRate = ws.sent > 0 ? (ws.acked / ws.sent) * 100 : null;
     return `
       <tr>
         <td>${escapeHtml(t.display_name || t.jid.split('@')[0])}</td>
         <td style="color:#8b949e;font-family:ui-monospace,monospace;">${escapeHtml(t.jid)}</td>
         <td class="rtt-cell ${cls}">${last?.rtt != null ? last.rtt + 'ms' : '--'}</td>
         <td>${renderSparkline(t.id)}</td>
-        <td>${last ? fmtAge(ageMs) + ' ago' : '--'}</td>
-        <td>${targetAckRate == null ? '--' : targetAckRate.toFixed(0) + '%'}</td>
+        <td>${ws.sent ?? 0}</td>
+        <td>${ws.acked ?? 0}</td>
         <td><button class="secondary" data-act="del-target" data-id="${t.id}">x</button></td>
       </tr>
     `;
   }).join('');
   return `
     <table class="target-table">
-      <thead><tr><th>name</th><th>jid</th><th>last RTT</th><th>spark</th><th>seen</th><th>ack 5m</th><th></th></tr></thead>
+      <thead><tr><th>name</th><th>jid</th><th>last RTT</th><th>spark</th><th>probes 5m</th><th>acks 5m</th><th></th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
   `;
