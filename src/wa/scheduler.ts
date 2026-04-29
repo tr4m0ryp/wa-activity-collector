@@ -49,6 +49,9 @@ export class TargetScheduler extends EventEmitter {
   start() {
     if (this.running) return;
     this.running = true;
+    for (const state of this.states.values()) {
+      if (!state.timer) this.scheduleNext(state);
+    }
     const targets = repos.targets.listByAccount(this.accountObj.account.id);
     for (const t of targets) this.startTarget(t);
   }
@@ -62,7 +65,13 @@ export class TargetScheduler extends EventEmitter {
   }
 
   startTarget(target: repos.Target) {
-    if (this.states.has(target.id)) return;
+    if (this.states.has(target.id)) {
+      const existing = this.states.get(target.id)!;
+      if (this.running && this.accountObj.status === 'open' && !existing.timer) {
+        this.scheduleNext(existing);
+      }
+      return;
+    }
     const state: TargetState = { target, timer: null, consecutiveTimeouts: 0 };
     this.states.set(target.id, state);
     void this.accountObj.subscribePresence(target.jid);
