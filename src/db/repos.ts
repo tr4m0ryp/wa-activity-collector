@@ -147,6 +147,14 @@ export const probes = {
       )
       .get(target_id, since_ms) as { sent: number; acked: number; avg_rtt: number | null; min_rtt: number | null; max_rtt: number | null };
   },
+  lastSentAtForAccount(account_id: number): number | null {
+    const row = getDb()
+      .prepare(
+        'SELECT MAX(p.sent_at_ms) as last_at FROM probe_events p JOIN targets t ON p.target_id = t.id WHERE t.account_id = ?',
+      )
+      .get(account_id) as { last_at: number | null } | undefined;
+    return row?.last_at ?? null;
+  },
 };
 
 export const presence = {
