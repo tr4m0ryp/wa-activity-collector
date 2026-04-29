@@ -32,10 +32,9 @@ PHONE_STATE_BANDS = [
 ]
 
 LABEL = {
-    'BOTH':    'phone + laptop both online',
-    'LAPTOP':  'at desk (laptop online)',
-    'PHONE':   'mobile (phone only)',
-    'OFFLINE': 'fully off the grid',
+    'PHONE_ACTIVE':    'phone active (low-RTT response — likely WA app foregrounded or screen on)',
+    'PHONE_REACHABLE': 'phone reachable (background / screen-off, but on the network)',
+    'SILENT':          'phone silent (no response — off, in deep sleep, or out of network)',
 }
 
 
@@ -92,27 +91,39 @@ def fetch_from_file(path: str) -> tuple[dict, list[dict]]:
     return {'id': '?', 'jid': '?', 'display_name': Path(path).stem, 'account_id': '?', 'added_at_ms': '0'}, probes
 
 
-def classify_devices(probes: list[dict]) -> dict[str, dict]:
-    """Group acks by ack_jid, compute per-device RTT signature, label phone/laptop."""
-    by_jid: dict[str, list[int]] = defaultdict(list)
+def classify_devices(probes: list[dict]) -> tuple[dict[str, dict], dict[str, dict]]:
+    """Group acks by ack_jid, segregate target devices (ack_type=delivery) from
+    our own account's devices (ack_type=sender). Returns (target_devices, own_devices).
+
+    Critical: ack_type=sender receipts come from OUR collector account's own linked
+    devices (the warm WA Web session you paired from), echoing our delete operations
+    as multi-device sync. They tell us nothing about the target. Only delivery-type
+    receipts come from the target's physical devices."""
+    by_jid_type: dict[tuple[str, str], list[int]] = defaultdict(list)
     types_by_jid: dict[str, Counter] = defaultdict(Counter)
     for p in probes:
-        if p['ack_jid'] and p['rtt_ms']:
-            by_jid[p['ack_jid']].append(int(p['rtt_ms']))
+        if p['ack_jid'] and p['rtt_ms'] and p['ack_type']:
+            by_jid_type[(p['ack_jid'], p['ack_type'])].append(int(p['rtt_ms']))
             types_by_jid[p['ack_jid']][p['ack_type']] += 1
-    devices = {}
-    for jid, rtts in by_jid.items():
+
+    target_devices = {}
+    own_devices = {}
+    for (jid, ack_type), rtts in by_jid_type.items():
         if len(rtts) < 5: continue
         median = statistics.median(rtts)
         p10 = statistics.quantiles(rtts, n=10)[0] if len(rtts) >= 10 else min(rtts)
-        kind = 'laptop' if median < 800 else ('phone' if median > 1500 else 'mid')
-        devices[jid] = {
+        kind = 'fast' if median < 800 else ('phone' if median > 1500 else 'mid')
+        record = {
             'jid': jid, 'kind': kind, 'count': len(rtts),
             'median': median, 'mean': statistics.mean(rtts), 'p10': p10,
             'min': min(rtts), 'max': max(rtts),
-            'ack_types': dict(types_by_jid[jid]),
+            'ack_type': ack_type,
         }
-    return devices
+        if ack_type == 'delivery':
+            target_devices[jid] = record
+        elif ack_type == 'sender':
+            own_devices[jid] = record
+    return target_devices, own_devices
 
 
 def phone_state_breakdown(phone_probes: list[dict], baseline_ms: float) -> list[tuple[str, int, float]]:
@@ -130,65 +141,57 @@ def phone_state_breakdown(phone_probes: list[dict], baseline_ms: float) -> list[
     return [(label, counts[label], counts[label]/total if total else 0) for label, _, _ in PHONE_STATE_BANDS]
 
 
-def per_minute_classify(probes: list[dict], laptop_jid: str | None, phone_jid: str | None) -> dict:
-    """Bucket probes per UTC minute, classify each minute as LAPTOP/PHONE/BOTH/OFFLINE/None."""
+def per_minute_classify(probes: list[dict], target_phone_jids: set[str], target_fast_jids: set[str]) -> list:
+    """Bucket probes per UTC minute. Each minute is classified by what TARGET-side
+    response was seen: PHONE_ACTIVE (fast device acked), PHONE_REACHABLE (slow device
+    acked), SILENT (neither responded; target unreachable), or None (sparse).
+
+    Only ack_type=delivery rows are counted. ack_type=sender (our own laptop's
+    sync echoes) is ignored entirely because it tells us nothing about the target."""
     buckets: dict[datetime, dict] = {}
     for p in probes:
         dt = datetime.fromtimestamp(int(p['sent_at_ms'])/1000, tz=timezone.utc).replace(second=0, microsecond=0)
         if dt not in buckets:
-            buckets[dt] = {'L': 0, 'P': 0, 'T': 0}
+            buckets[dt] = {'fast': 0, 'phone': 0, 'sent': 0, 'timeout': 0}
+        buckets[dt]['sent'] += 1
         if p['timed_out'] == '1':
-            buckets[dt]['T'] += 1
-        elif p['ack_jid'] == laptop_jid:
-            buckets[dt]['L'] += 1
-        elif p['ack_jid'] == phone_jid:
-            buckets[dt]['P'] += 1
+            buckets[dt]['timeout'] += 1
+            continue
+        if p['ack_type'] != 'delivery':
+            continue  # ignore sender-type acks (our own account)
+        if p['ack_jid'] in target_fast_jids:
+            buckets[dt]['fast'] += 1
+        elif p['ack_jid'] in target_phone_jids:
+            buckets[dt]['phone'] += 1
     classified = []
     for dt in sorted(buckets):
         d = buckets[dt]
-        if d['L'] >= 2 and d['P'] >= 2: s = 'BOTH'
-        elif d['L'] >= 2 and d['P'] == 0: s = 'LAPTOP'
-        elif d['P'] >= 2 and d['L'] == 0: s = 'PHONE'
-        elif d['L'] == 0 and d['P'] == 0 and d['T'] >= 2: s = 'OFFLINE'
+        if d['fast'] >= 2: s = 'PHONE_ACTIVE'
+        elif d['phone'] >= 2: s = 'PHONE_REACHABLE'
+        elif d['sent'] >= 5 and d['fast'] == 0 and d['phone'] == 0: s = 'SILENT'
         else: s = None
         classified.append((dt, s, d))
     return classified
 
 
 def smooth_and_coalesce(classified: list) -> list[tuple]:
-    """Smooth tiny BOTH blips into surrounding state, then coalesce contiguous minutes."""
-    def surrounded_by(idx, target):
-        L = sum(1 for j in range(max(0,idx-4), min(len(classified),idx+5)) if classified[j][1] == 'LAPTOP')
-        P = sum(1 for j in range(max(0,idx-4), min(len(classified),idx+5)) if classified[j][1] == 'PHONE')
-        return (L > P) if target == 'LAPTOP' else (P > L)
-
-    smoothed = []
-    for i, (t, s, d) in enumerate(classified):
-        if s == 'BOTH':
-            if surrounded_by(i, 'LAPTOP'): smoothed.append((t, 'LAPTOP', True))
-            elif surrounded_by(i, 'PHONE'): smoothed.append((t, 'PHONE', True))
-            else: smoothed.append((t, 'BOTH', False))
-        else:
-            smoothed.append((t, s, False))
-
-    # absorb 1-2 min PHONE inserts inside LAPTOP runs (and vice versa)
+    """Coalesce contiguous same-state minutes; absorb 1-2 min state flips into surrounding state."""
     cleaned = []
     i = 0
-    while i < len(smoothed):
-        if cleaned and cleaned[-1][1] in ('LAPTOP', 'PHONE') and smoothed[i][1] not in (None, cleaned[-1][1]):
+    while i < len(classified):
+        if cleaned and cleaned[-1][1] is not None and classified[i][1] not in (None, cleaned[-1][1]):
             j = i
-            while j < len(smoothed) and smoothed[j][1] == smoothed[i][1]:
+            while j < len(classified) and classified[j][1] == classified[i][1]:
                 j += 1
             run_len = j - i
-            if run_len <= 2 and j < len(smoothed) and smoothed[j][1] == cleaned[-1][1]:
+            if run_len <= 2 and j < len(classified) and classified[j][1] == cleaned[-1][1]:
                 for k in range(i, j):
-                    cleaned.append((smoothed[k][0], cleaned[-1][1], True))
+                    cleaned.append((classified[k][0], cleaned[-1][1], True))
                 i = j
                 continue
-        cleaned.append(smoothed[i])
+        cleaned.append((classified[i][0], classified[i][1], False))
         i += 1
 
-    # coalesce
     runs = []
     cur_state = None; cur_start = None; prev = None; touches = 0
     for t, s, is_touch in cleaned:
@@ -206,13 +209,19 @@ def smooth_and_coalesce(classified: list) -> list[tuple]:
     return runs
 
 
-def render_devices(devices: dict, target_name: str):
-    print(f"\n  DEVICES seen for {target_name}")
-    print(f"  {'-'*54}")
-    print(f"  {'kind':<10} {'jid':<28} {'n':>6} {'med':>6} {'p10':>5}  ack_types")
-    for d in sorted(devices.values(), key=lambda x: x['median']):
-        types = ', '.join(f"{k}:{v}" for k, v in sorted(d['ack_types'].items(), key=lambda x:-x[1]))
-        print(f"  {d['kind']:<10} {d['jid']:<28} {d['count']:>6,} {d['median']:>4.0f}ms {d['p10']:>3.0f}ms  {types}")
+def render_devices(target_devices: dict, own_devices: dict, target_name: str):
+    print(f"\n  TARGET devices for {target_name}  (delivery-type acks only — these are theirs)")
+    print(f"  {'-'*64}")
+    print(f"  {'kind':<10} {'jid':<32} {'n':>6}  {'med':>6}  {'p10':>5}")
+    if not target_devices:
+        print(f"  (none — target produced no delivery-type acks)")
+    for d in sorted(target_devices.values(), key=lambda x: x['median']):
+        print(f"  {d['kind']:<10} {d['jid']:<32} {d['count']:>6,}  {d['median']:>4.0f}ms  {d['p10']:>3.0f}ms")
+    print(f"\n  Our own account's devices  (sender-type acks — ignored for target analysis)")
+    print(f"  {'-'*64}")
+    print(f"  {'kind':<10} {'jid':<32} {'n':>6}  {'med':>6}")
+    for d in sorted(own_devices.values(), key=lambda x: -x['count']):
+        print(f"  {d['kind']:<10} {d['jid']:<32} {d['count']:>6,}  {d['median']:>4.0f}ms")
 
 
 def render_phone_states(breakdown: list[tuple], baseline: float, total: int):
@@ -255,16 +264,21 @@ def render_timeline(runs: list, tz_offset_hours: int, target_name: str):
     grand = sum(totals.values())
 
     print()
-    print(f"  {'='*54}")
+    print(f"  {'='*70}")
     print(f"  TOTAL OBSERVED")
-    print(f"  {'='*54}")
-    for st in ['LAPTOP', 'PHONE', 'BOTH', 'OFFLINE']:
+    print(f"  {'='*70}")
+    short = {
+        'PHONE_ACTIVE':    'phone active (low-RTT, likely WA in use)',
+        'PHONE_REACHABLE': 'phone reachable (background)',
+        'SILENT':          'phone silent (off / out of network)',
+    }
+    for st in ['PHONE_ACTIVE', 'PHONE_REACHABLE', 'SILENT']:
         if totals[st] == 0: continue
         m = totals[st]; pct = 100*m/grand
         h, mn = int(m//60), int(m%60)
         dur = f"{h}h {mn:02d}min" if h else f"{int(m)} min"
         bar = '#' * int(pct*0.4)
-        print(f"  {LABEL[st]:<32} {dur:>9}   {pct:5.1f}%  {bar}")
+        print(f"  {short[st]:<48} {dur:>9}   {pct:5.1f}%  {bar}")
     print(f"\n  observed across {grand/60:.1f}h")
 
 
@@ -290,21 +304,23 @@ def main():
         sys.exit(f"no probes for target '{args.target}'")
 
     target_name = target_row.get('display_name') or target_row['jid'].split('@')[0]
-    devices = classify_devices(probes)
-    laptop_jid = next((j for j, d in devices.items() if d['kind'] == 'laptop'), None)
-    phone_jid  = next((j for j, d in devices.items() if d['kind'] == 'phone'),  None)
+    target_devices, own_devices = classify_devices(probes)
+
+    target_phone_jids = {jid for jid, d in target_devices.items() if d['kind'] == 'phone'}
+    target_fast_jids  = {jid for jid, d in target_devices.items() if d['kind'] in ('fast', 'mid')}
 
     if args.mode in ('devices', 'all'):
-        render_devices(devices, target_name)
+        render_devices(target_devices, own_devices, target_name)
 
-    if args.mode in ('phone-states', 'all') and phone_jid:
-        phone_probes = [p for p in probes if p['ack_jid'] == phone_jid]
-        baseline = devices[phone_jid]['p10']
+    if args.mode in ('phone-states', 'all') and target_phone_jids:
+        phone_probes = [p for p in probes if p['ack_jid'] in target_phone_jids and p['ack_type'] == 'delivery']
+        baselines = [target_devices[j]['p10'] for j in target_phone_jids]
+        baseline = min(baselines)
         breakdown = phone_state_breakdown(phone_probes, baseline)
         render_phone_states(breakdown, baseline, len(phone_probes))
 
     if args.mode in ('timeline', 'all'):
-        classified = per_minute_classify(probes, laptop_jid, phone_jid)
+        classified = per_minute_classify(probes, target_phone_jids, target_fast_jids)
         runs = smooth_and_coalesce(classified)
         if not runs:
             print("\n  no classifiable activity windows found.")
