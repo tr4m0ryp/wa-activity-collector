@@ -1,6 +1,6 @@
 ---
-name: analyze-target
-description: Analyse a single tracked target's WhatsApp probe data. Pulls live from the GCP server's SQLite (WAL-safe — does not interrupt collection), classifies the target's devices into phone/laptop by RTT signature, decomposes phone RTTs into behavioural states (foreground/screen-off/etc.), and emits a clean human-readable presence timeline in NL local time. Triggers include "analyze <name>", "show timeline for <name>", "what was <name> doing", "decompose <name>'s activity", "/analyze-target <name>".
+name: analyse-target
+description: Analyse a single tracked target's WhatsApp probe data. Pulls live from the GCP server's SQLite (WAL-safe — does not interrupt collection), classifies the target's devices into phone/laptop by RTT signature, decomposes phone RTTs into behavioural states (foreground/screen-off/etc.), and emits a clean human-readable presence timeline in NL local time. Triggers include "analyze <name>", "show timeline for <name>", "what was <name> doing", "decompose <name>'s activity", "/analyse-target <name>".
 argument-hint: <target_name_or_jid> [--since 24h|3d] [--mode timeline|devices|phone-states|all]
 user-invocable: true
 allowed-tools: Bash, Read, Write
@@ -12,7 +12,7 @@ Project-scoped skill for inspecting one target's collected probe data and render
 
 ## When to use
 
-- The user asks "what's <name> been doing", "show me <name>'s timeline", "decompose <name>'s data", or types `/analyze-target <name>`
+- The user asks "what's <name> been doing", "show me <name>'s timeline", "decompose <name>'s data", or types `/analyse-target <name>`
 - Any time the user wants to look at a specific target rather than just account-level stats
 - Anytime they ask for "device states" or "when was she online/mobile"
 
