@@ -28,6 +28,7 @@ export class Prober {
   constructor(
     private accountId: number,
     private getSock: () => WASocket | null,
+    private onTimeout?: (targetId: number) => void,
   ) {}
 
   async sendProbe(target: repos.Target): Promise<boolean> {
@@ -91,6 +92,7 @@ export class Prober {
     this.pending.delete(probeMsgId);
     repos.probes.markTimeout(probeMsgId);
     repos.health.bumpTimeout(pending.accountId);
+    this.onTimeout?.(pending.targetId);
   }
 
   shutdown() {

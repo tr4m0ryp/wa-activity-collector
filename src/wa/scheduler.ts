@@ -18,7 +18,13 @@ export class TargetScheduler extends EventEmitter {
 
   constructor(private accountObj: Account) {
     super();
-    this.prober = new Prober(accountObj.account.id, () => accountObj.sock);
+    this.prober = new Prober(accountObj.account.id, () => accountObj.sock, (targetId) => {
+      // A probe timed out with no ack. This is the rate-independent offline
+      // signal: it counts genuine non-responses, not in-flight depth (which
+      // scales with rate × RTT). Acks reset the counter in handleAck().
+      const s = this.states.get(targetId);
+      if (s) s.consecutiveTimeouts += 1;
+    });
     this.wireListeners();
   }
 
@@ -102,11 +108,6 @@ export class TargetScheduler extends EventEmitter {
         if (!ok) {
           state.consecutiveTimeouts += 1;
         }
-      }
-      // detect timeouts via prober's outstanding count + age
-      const outstanding = this.prober.outstandingForTarget(state.target.id);
-      if (outstanding > 3) {
-        state.consecutiveTimeouts += 1;
       }
       this.scheduleNext(state);
     }, delay);
